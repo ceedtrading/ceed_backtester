@@ -10,7 +10,7 @@ st.set_page_config(page_title="Ceed Trading: Order Flow Physics Engine", layout=
 # AI API SETUP (Gemini 3 Flash)
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-3-flash') 
+    model = genai.GenerativeModel('gemini-3-flash-preview') 
 except Exception as e:
     st.error("API Key Error: Please check your Streamlit Secrets.")
 
