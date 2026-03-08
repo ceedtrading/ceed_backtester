@@ -7,12 +7,12 @@ from datetime import datetime, time
 # --- SYSTEM CONFIGURATION ---
 st.set_page_config(page_title="Ceed Trading: Order Flow Physics Engine", layout="wide")
 
-# AI API SETUP (Gemini 3 Flash Integration)
+# AI API SETUP (Gemini 3 Flash)
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-1.5-flash') # Powered by Gemini 3 Flash engine
+    model = genai.GenerativeModel('gemini-3-flash') 
 except Exception as e:
-    st.error("API Configuration Friction: Check your Streamlit Secrets.")
+    st.error("API Key Error: Please check your Streamlit Secrets.")
 
 def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, point_val):
     trades = []
@@ -62,7 +62,7 @@ def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, poi
                         break
         
         if exit_p is not None:
-            # Capture Lead Engine Context if available
+            # Lead Alignment context for the AI
             lead_context = "N/A"
             if df_lead is not None:
                 lead_snap = df_lead[df_lead['dt'] <= entry_time].tail(5)
@@ -129,9 +129,7 @@ if f_file:
             st.divider()
             st.subheader("Antigravity: Gemini 3 Flash Synthetic Review")
             with st.spinner("Analyzing Multi-Asset Order Flow Physics..."):
-                # Group data to show alignment impact
                 alignment_impact = results.groupby(['Lead_Alignment', 'Status']).size().to_string()
-                
                 prompt = f"""
                 Act as the Antigravity Synthetic Reviewer using Gemini 3 Flash.
                 Analyze the relationship between the Futures Chassis and the Lead Engine Overlay.
@@ -141,9 +139,9 @@ if f_file:
                 Avg Heat (MAE): {results['MAE_Pts'].mean():.2f} pts.
                 
                 MISSION:
-                1. Identify 'Lead-Lag Friction': Do losses cluster when the Lead Engine (NVDA/AAPL) is out of sync?
-                2. Temporal Analysis: Review Hour_Blocks for 'Alpha Friction' [cite: 2026-02-17].
-                3. Optimization: Suggest a filter based on 'Lead_Alignment' to maximize Optimal Edge Extraction [cite: 2026-02-01].
+                1. Identify 'Lead-Lag Friction': Do losses cluster when the Lead Engine is out of sync?
+                2. Temporal Analysis: Review Hour_Blocks for 'Alpha Friction'.
+                3. Optimization: Suggest a filter based on 'Lead_Alignment' to maximize Optimal Edge Extraction.
                 """
                 response = model.generate_content(prompt)
                 st.info(response.text)
