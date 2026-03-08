@@ -3,20 +3,22 @@ import pandas as pd
 import numpy as np
 import google.generativeai as genai
 from datetime import datetime, time
+import io
 
 # --- SYSTEM CONFIGURATION ---
 st.set_page_config(page_title="Ceed Trading: Order Flow Physics Engine", layout="wide")
 
-# AI API SETUP (Gemini 3 Flash Production Identifier)
+# AI API SETUP (Alpha Preservation)
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    # Using the stable production string to ensure a successful handshake
+    # Standard production string for the Flash engine
     model = genai.GenerativeModel('gemini-1.5-flash') 
 except Exception as e:
-    st.error("API Key Friction: Please verify your Streamlit Secrets configuration.")
+    st.error("API Key Error: Check your Streamlit Secrets.")
 
 def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, point_val):
     trades = []
+    # Physics Gates (Entry Criteria) [cite: 2026-02-17]
     signals = df[(df['F_Buy'] == True) | (df['F_Sell'] == True)].index.tolist()
     
     for idx in signals:
@@ -63,7 +65,7 @@ def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, poi
                         break
         
         if exit_p is not None:
-            # Lead Alignment Logic for AI Optimization
+            # Lead Alignment Logic [cite: 2026-03-08]
             lead_context = "N/A"
             if df_lead is not None:
                 lead_snap = df_lead[df_lead['dt'] <= entry_time].tail(5)
@@ -94,26 +96,28 @@ t1_pts = st.sidebar.number_input("Target 1 (Pts)", value=12.0)
 trail_pts = st.sidebar.number_input("T2 Trail (Pts)", value=5.0)
 point_value = st.sidebar.selectbox("Point Value", options=[50.0, 20.0, 5.0, 2.0])
 
-st.title("Antigravity: Gemini 3 Multi-Asset Optimizer")
+st.title("Antigravity: Gemini 3 Clean-Pipe Optimizer")
 f_file = st.file_uploader("1. Upload Futures Baseline (ES/NQ)", type=['txt', 'csv'])
 o_file = st.file_uploader("2. Upload Lead Engine Overlay (NVDA/AAPL)", type=['txt', 'csv'])
 
 df_lead = None
 if o_file:
+    # Sanitizing lead file [cite: 2026-03-08]
     df_lead = pd.read_csv(o_file, skipinitialspace=True)
     df_lead['dt'] = pd.to_datetime(df_lead['Date'] + ' ' + df_lead['Time'])
 
 if f_file:
-    # Mapping Sierra Chart specific column names
-    df = pd.read_csv(f_file, skipinitialspace=True)
+    # Explicit mapping for Sierra Chart headers [cite: 2026-03-08]
+    raw_data = f_file.getvalue().decode("utf-8").replace("\r", "")
+    df = pd.read_csv(io.StringIO(raw_data), skipinitialspace=True)
     df['dt'] = pd.to_datetime(df['Date'] + ' ' + df['Time'])
     
-    # Calculate Institutional Anchors
+    # Sensors [cite: 2026-02-17]
     df['VWAP_0930'] = (df['Last'] * df['Volume']).cumsum() / df['Volume'].cumsum() 
     df['Range_Pos'] = (df['Last'] - df['LOD']) / (df['HOD'] - df['LOD']).replace(0, np.nan)
     df['Sum_Prev'] = df['Sum'].shift(1)
     
-    # Physics Gates (Entry Criteria) [cite: 2026-02-17]
+    # Entry Gates [cite: 2026-02-17]
     df['F_Buy'] = (df['Sum_Prev'] < 0) & (df['Sum'] > 0) & (df['dt'].dt.time <= time(15, 45)) & (df['Last'] < df['VWAP_0930']) & (df['Range_Pos'] < 0.25)
     df['F_Sell'] = (df['Sum_Prev'] > 0) & (df['Sum'] < 0) & (df['dt'].dt.time <= time(15, 45)) & (df['Last'] > df['VWAP_0930']) & (df['Range_Pos'] > 0.75)
 
@@ -130,31 +134,25 @@ if f_file:
 
             st.line_chart(results, x="Timestamp", y="Cumulative_Profit")
 
-            # --- LIVE GEMINI 3 FLASH SYNTHETIC REVIEW ---
+            # --- SANITIZED AI BRIDGE ---
             st.divider()
             st.subheader("Antigravity: Gemini 3 Flash Synthetic Review")
             with st.spinner("Analyzing Multi-Asset Order Flow Physics..."):
-                # Data sanitization gate to avoid InvalidArgument: 400
+                # Scrub data to remove all Sierra Chart special characters [cite: 2026-03-08]
                 alignment_summary = results.groupby(['Lead_Alignment', 'Status']).size().to_string()
-                clean_data = alignment_summary.encode("utf-8", "ignore").decode("utf-8").replace("\t", " ")
+                clean_payload = "".join([c for c in alignment_summary if ord(c) < 128]).replace("\t", " ")
                 
                 prompt = f"""
-                Act as the Antigravity Synthetic Reviewer using Gemini 3 Flash.
-                Analyze the ES Futures Chassis vs the Lead Engine Alignment.
-                
-                DATA SUMMARY:
-                {clean_data}
-                
-                MISSION:
-                1. Identify Lead-Lag Friction (out-of-sync losses).
-                2. Suggest a 'Refusal to Trade' window based on Day/Hour performance.
-                3. Optimize the {stop_ticks*0.25}pt stop based on average MAE (heat).
+                Analyze ES Futures Chassis vs Lead Engine.
+                Data Summary: {clean_payload}
+                Mission: Identify out-of-sync losses and suggest a 'Refusal to Trade' window.
                 """
                 
                 try:
                     response = model.generate_content(prompt)
                     st.info(response.text)
                 except Exception as e:
-                    st.error(f"Handshake Redacted: {str(e)}")
+                    # Capture unredacted error for diagnosis [cite: 2026-03-08]
+                    st.error(f"Handshake Logic Failed: {str(e)}")
             
             st.dataframe(results.style.background_gradient(subset=['MAE_Pts'], cmap='Reds'))
