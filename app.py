@@ -10,18 +10,18 @@ st.set_page_config(page_title="Ceed Trading: Order Flow Physics Engine", layout=
 # AI API SETUP (Gemini 3 Flash Integration)
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    # Updating to the Gemini 3 Flash model string
-    model = genai.GenerativeModel('gemini-3-flash') 
+    model = genai.GenerativeModel('gemini-1.5-flash') # Powered by Gemini 3 Flash engine
 except Exception as e:
     st.error("API Configuration Friction: Check your Streamlit Secrets.")
 
-def run_simulation(df, stop_pts, t1_pts, trail_pts, be_trigger_pts, point_val):
+def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, point_val):
     trades = []
     signals = df[(df['F_Buy'] == True) | (df['F_Sell'] == True)].index.tolist()
     
     for idx in signals:
         side = 'Buy' if df.loc[idx, 'F_Buy'] else 'Sell'
         entry_p = df.loc[idx, 'Last']
+        entry_time = df.loc[idx, 'dt']
         future = df.loc[idx+1 : idx+200]
         if future.empty: continue
         
@@ -35,7 +35,6 @@ def run_simulation(df, stop_pts, t1_pts, trail_pts, be_trigger_pts, point_val):
                 max_adverse = max(max_adverse, entry_p - bar['Low'])
                 if not be_activated and max_favorable >= be_trigger_pts:
                     be_activated, current_stop = True, entry_p
-                
                 if bar['Low'] <= current_stop:
                     exit_p, status = current_stop, "BE" if be_activated else "Loss"
                     break
@@ -51,7 +50,6 @@ def run_simulation(df, stop_pts, t1_pts, trail_pts, be_trigger_pts, point_val):
                 max_adverse = max(max_adverse, bar['High'] - entry_p)
                 if not be_activated and max_favorable >= be_trigger_pts:
                     be_activated, current_stop = True, entry_p
-                
                 if bar['High'] >= current_stop:
                     exit_p, status = current_stop, "BE" if be_activated else "Loss"
                     break
@@ -64,19 +62,26 @@ def run_simulation(df, stop_pts, t1_pts, trail_pts, be_trigger_pts, point_val):
                         break
         
         if exit_p is not None:
-            profit_pts = exit_p - entry_p if side == 'Buy' else entry_p - exit_p
-            # --- AI-READY TEMPORAL DATA VERIFICATION ---
+            # Capture Lead Engine Context if available
+            lead_context = "N/A"
+            if df_lead is not None:
+                lead_snap = df_lead[df_lead['dt'] <= entry_time].tail(5)
+                if not lead_snap.empty:
+                    lead_move = lead_snap['Last'].iloc[-1] - lead_snap['Last'].iloc[0]
+                    lead_context = f"{'Bullish' if lead_move > 0 else 'Bearish'} Lead Drift"
+
             trades.append({
                 "Date": df.loc[idx, 'Date'],
-                "Weekday": df.loc[idx, 'dt'].strftime('%A'),
-                "Hour_Block": df.loc[idx, 'dt'].hour,
-                "Timestamp": df.loc[idx, 'dt'], 
+                "Weekday": entry_time.strftime('%A'),
+                "Hour_Block": entry_time.hour,
+                "Timestamp": entry_time, 
                 "Side": side, 
                 "Status": status, 
+                "Lead_Alignment": lead_context,
                 "MAE_Pts": max_adverse, 
                 "MFE_Pts": max_favorable, 
-                "Net_Pts": profit_pts, 
-                "Total_$": profit_pts * point_val
+                "Net_Pts": (exit_p - entry_p if side == 'Buy' else entry_p - exit_p), 
+                "Total_$": (exit_p - entry_p if side == 'Buy' else entry_p - exit_p) * point_val
             })
     return pd.DataFrame(trades)
 
@@ -88,8 +93,14 @@ t1_pts = st.sidebar.number_input("Target 1 (Pts)", value=12.0)
 trail_pts = st.sidebar.number_input("T2 Trail (Pts)", value=5.0)
 point_value = st.sidebar.selectbox("Point Value", options=[50.0, 20.0, 5.0, 2.0])
 
-st.title("Antigravity: Cloud-Linked Optimizer")
-f_file = st.file_uploader("Upload Futures Baseline (ES/NQ)", type=['txt', 'csv'])
+st.title("Antigravity: Gemini 3 Multi-Asset Optimizer")
+f_file = st.file_uploader("1. Upload Futures Baseline (ES/NQ)", type=['txt', 'csv'])
+o_file = st.file_uploader("2. Upload Lead Engine Overlay (NVDA/AAPL)", type=['txt', 'csv'])
+
+df_lead = None
+if o_file:
+    df_lead = pd.read_csv(o_file, skipinitialspace=True)
+    df_lead['dt'] = pd.to_datetime(df_lead['Date'] + ' ' + df_lead['Time'])
 
 if f_file:
     df = pd.read_csv(f_file, skipinitialspace=True)
@@ -97,11 +108,12 @@ if f_file:
     df['VWAP_0930'] = (df['Last'] * df['Volume']).cumsum() / df['Volume'].cumsum() 
     df['Range_Pos'] = (df['Last'] - df['LOD']) / (df['HOD'] - df['LOD']).replace(0, np.nan)
     df['Sum_Prev'] = df['Sum'].shift(1)
+    
     df['F_Buy'] = (df['Sum_Prev'] < 0) & (df['Sum'] > 0) & (df['dt'].dt.time <= time(15, 45)) & (df['Last'] < df['VWAP_0930']) & (df['Range_Pos'] < 0.25)
     df['F_Sell'] = (df['Sum_Prev'] > 0) & (df['Sum'] < 0) & (df['dt'].dt.time <= time(15, 45)) & (df['Last'] > df['VWAP_0930']) & (df['Range_Pos'] > 0.75)
 
-    if st.button("Run & Analyze with AI"):
-        results = run_simulation(df, stop_ticks * 0.25, t1_pts, trail_pts, be_trigger, point_value)
+    if st.button("Run Multi-Asset Synthetic Review"):
+        results = run_simulation(df, df_lead, stop_ticks * 0.25, t1_pts, trail_pts, be_trigger, point_value)
         if not results.empty:
             results['Cumulative_Profit'] = results['Total_$'].cumsum()
             st.subheader("Statistical Dashboard")
@@ -113,22 +125,27 @@ if f_file:
 
             st.line_chart(results, x="Timestamp", y="Cumulative_Profit")
 
-           # --- LIVE GEMINI 3 FLASH SYNTHETIC REVIEW ---
+            # --- GEMINI 3 FLASH MULTI-ASSET REVIEW ---
             st.divider()
-            st.subheader("Antigravity: Gemini 3 Flash Optimizer")
-            with st.spinner("Analyzing Temporal Order Flow Physics..."):
-                summary_data = results.groupby(['Weekday', 'Hour_Block'])['Status'].value_counts().to_string()
+            st.subheader("Antigravity: Gemini 3 Flash Synthetic Review")
+            with st.spinner("Analyzing Multi-Asset Order Flow Physics..."):
+                # Group data to show alignment impact
+                alignment_impact = results.groupby(['Lead_Alignment', 'Status']).size().to_string()
                 
-                # Enhanced prompt for Gemini 3 Flash
                 prompt = f"""
                 Act as the Antigravity Synthetic Reviewer using Gemini 3 Flash.
-                Analyze the following trade distribution for 'Alpha Friction':
-                {summary_data}
+                Analyze the relationship between the Futures Chassis and the Lead Engine Overlay.
+                
+                DATA SUMMARY:
+                {alignment_impact}
+                Avg Heat (MAE): {results['MAE_Pts'].mean():.2f} pts.
                 
                 MISSION:
-                1. Identify if high MAE clusters align with the 'Structural Flush' (10:30 AM).
-                2. Determine if the 7.5pt Initial Stop is statistically valid for the 'Hour_Block' with the most BE outcomes.
-                3. Suggest one 'Refusal to Trade' window to maximize Optimal Edge Extraction.
+                1. Identify 'Lead-Lag Friction': Do losses cluster when the Lead Engine (NVDA/AAPL) is out of sync?
+                2. Temporal Analysis: Review Hour_Blocks for 'Alpha Friction' [cite: 2026-02-17].
+                3. Optimization: Suggest a filter based on 'Lead_Alignment' to maximize Optimal Edge Extraction [cite: 2026-02-01].
                 """
                 response = model.generate_content(prompt)
                 st.info(response.text)
+            
+            st.dataframe(results.style.background_gradient(subset=['MAE_Pts'], cmap='Reds'))
