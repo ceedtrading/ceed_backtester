@@ -39,14 +39,16 @@ def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, poi
                 if not be_activated and max_favorable >= be_trigger_pts:
                     be_activated, current_stop = True, entry_p
                 if bar['Low'] <= current_stop:
-                    exit_p, status = current_stop, "BE" if be_activated else "Loss"
+                    exit_p = current_stop
+                    status = "BE" if be_activated else "Loss"
                     break
                 if not u1_hit and bar['High'] >= entry_p + t1_pts:
                     u1_hit, peak = True, bar['High']
                 elif u1_hit:
                     peak = max(peak, bar['High'])
                     if bar['Low'] <= peak - trail_pts:
-                        exit_p, status = peak - trail_pts, "Win"
+                        exit_p = peak - trail_pts
+                        status = "Win"
                         break
             else: # Sell Side
                 max_favorable = max(max_favorable, entry_p - bar['Low'])
@@ -54,14 +56,16 @@ def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, poi
                 if not be_activated and max_favorable >= be_trigger_pts:
                     be_activated, current_stop = True, entry_p
                 if bar['High'] >= current_stop:
-                    exit_p, status = current_stop, "BE" if be_activated else "Loss"
+                    exit_p = current_stop
+                    status = "BE" if be_activated else "Loss"
                     break
                 if not u1_hit and bar['Low'] <= entry_p - t1_pts:
                     u1_hit, peak = True, bar['Low']
                 elif u1_hit:
                     peak = min(peak, bar['Low'])
                     if bar['High'] >= peak + trail_pts:
-                        exit_p, status = peak + trail_pts, "Win"
+                        exit_p = peak + trail_pts
+                        status = "Win"
                         break
         
         if exit_p is not None:
@@ -86,7 +90,7 @@ def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, poi
     return pd.DataFrame(trades)
 
 # --- UI FRONTEND ---
-st.title("Antigravity: Bimodal AI Optimizer")
+st.title("Antigravity: Bimodal Risk Optimizer")
 
 st.sidebar.header("Mechanical Controls")
 stop_ticks = st.sidebar.number_input("Initial Stop (Ticks)", value=30)
@@ -131,13 +135,21 @@ if f_file:
         res = st.session_state.results
         st.subheader("Statistical Performance Summary")
         
-        m1, m2, m3, m4, m5 = st.columns(5)
+        # --- ENHANCED RISK METRICS ---
+        avg_win = res[res['Net'] > 0]['Net'].mean() if not res[res['Net'] > 0].empty else 0
+        avg_loss = res[res['Net'] <= 0]['Net'].mean() if not res[res['Net'] <= 0].empty else 0
+        
+        m1, m2, m3 = st.columns(3)
         m1.metric("Total P/L", f"${res['Net'].sum():,.2f}")
         m2.metric("Total Trades", len(res))
         win_rate = (len(res[res['Status'] == 'Win']) / len(res)) * 100 if len(res) > 0 else 0
         m3.metric("Win Rate %", f"{win_rate:.1f}%")
-        m4.metric("Avg MAE", f"{res['MAE'].mean():.2f}")
-        m5.metric("Avg MFE", f"{res['MFE'].mean():.2f}")
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Avg Win $", f"${avg_win:,.2f}", delta_color="normal")
+        c2.metric("Avg Loss $", f"${avg_loss:,.2f}", delta_color="inverse")
+        c3.metric("Avg MAE", f"{res['MAE'].mean():.2f}")
+        c4.metric("Avg MFE", f"{res['MFE'].mean():.2f}")
 
         st.line_chart(res, x="Timestamp", y="Net")
         st.write("### 📜 Full Trade Log")
@@ -145,17 +157,14 @@ if f_file:
 
         st.divider()
         if st.button("Request AI Bimodal Optimization"):
-            with st.spinner("Analyzing Lead-Lag Friction..."):
-                # PAYLOAD 1: Sorted Hourly Stats
-                hour_payload = res.groupby(['Hour', 'Lead_Sync']).agg({'Net': 'sum', 'MAE': 'mean', 'MFE': 'mean', 'Status': 'count'}).reset_index().to_string()
-                # PAYLOAD 2: Sorted Weekday Stats
-                day_payload = res.groupby(['Weekday', 'Lead_Sync']).agg({'Net': 'sum', 'MAE': 'mean', 'MFE': 'mean', 'Status': 'count'}).reset_index().to_string()
-                
-                clean_payload = "".join(i for i in (hour_payload + day_payload) if ord(i) < 128)
+            with st.spinner("Analyzing Risk Dynamics..."):
+                hour_payload = res.groupby(['Hour', 'Lead_Sync']).agg({'Net': 'sum', 'MAE': 'mean', 'Status': 'count'}).reset_index().to_string()
+                day_payload = res.groupby(['Weekday', 'Lead_Sync']).agg({'Net': 'sum', 'MAE': 'mean', 'Status': 'count'}).reset_index().to_string()
                 
                 prompt = f"""
                 Act as the Antigravity Synthetic Reviewer using Gemini 3 Flash. 
-                Analyze these trading physics (ES Futures vs Lead Engine Overlay):
+                Analyze these trading physics. 
+                Avg Win: ${avg_win:.2f}, Avg Loss: ${avg_loss:.2f}.
                 
                 HOURLY DATA:
                 {hour_payload}
@@ -164,12 +173,11 @@ if f_file:
                 {day_payload}
 
                 INSTRUCTIONS:
-                1. Provide TABLE 1: HOURLY PERFORMANCE STATS. Sort by Total P/L (Highest to Lowest). 
-                   Include: [Hour, Lead Sync Impact, Trades, Win Rate %, Total P/L, Avg MAE/MFE].
-                2. Provide TABLE 2: WEEKDAY PERFORMANCE STATS. Sort by Total P/L (Highest to Lowest).
-                   Include: [Day, Lead Sync Impact, Trades, Win Rate %, Total P/L, Avg MAE/MFE].
-                3. List the TOP 3 highest 'Alpha Friction' segments to eliminate immediately.
-                4. Give one 'Refusal to Trade' rule to maximize Optimal Edge Extraction.
+                1. Provide TABLE 1: HOURLY PERFORMANCE. Sort by Total P/L (Highest to Lowest).
+                2. Provide TABLE 2: WEEKDAY PERFORMANCE. Sort by Total P/L (Highest to Lowest).
+                3. Columns for both: [Segment, Lead Sync, Win Rate %, Total P/L, Avg MAE, Risk Level].
+                4. Compare the 'Avg Win' vs 'Avg Loss' and identify if specific segments are skewing the R:R unfavorably.
+                5. Provide one final 'Refusal to Trade' rule.
                 """
                 
                 try:
