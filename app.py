@@ -11,7 +11,7 @@ st.set_page_config(page_title="Ceed Trading: Order Flow Physics Engine", layout=
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     # The identifier for the engine you requested
-    model = genai.GenerativeModel('gemini-1.5-flash') 
+    model = genai.GenerativeModel('gemini-2.5-flash') 
 except Exception as e:
     st.error("API Authentication Friction: Check your Streamlit Secrets.")
 
