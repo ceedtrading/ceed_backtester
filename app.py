@@ -65,7 +65,6 @@ def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, poi
                         break
         
         if exit_p is not None:
-            # --- OVERLAY INTEGRATION ---
             lead_sync = "No_Overlay"
             if df_lead is not None:
                 lead_snap = df_lead[df_lead['dt'] <= entry_time].tail(5)
@@ -87,7 +86,7 @@ def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, poi
     return pd.DataFrame(trades)
 
 # --- UI FRONTEND ---
-st.title("Antigravity: Gemini 3 Multi-Asset Optimizer")
+st.title("Antigravity: Bimodal AI Optimizer")
 
 st.sidebar.header("Mechanical Controls")
 stop_ticks = st.sidebar.number_input("Initial Stop (Ticks)", value=30)
@@ -110,7 +109,6 @@ if 'results' not in st.session_state:
     st.session_state.results = None
 
 if f_file:
-    # Sierra Chart Scrubbing
     raw_data = f_file.getvalue().decode("utf-8").replace("\r", "")
     df = pd.read_csv(io.StringIO(raw_data), skipinitialspace=True)
     df.columns = [c.strip() for c in df.columns]
@@ -142,40 +140,40 @@ if f_file:
         m5.metric("Avg MFE", f"{res['MFE'].mean():.2f}")
 
         st.line_chart(res, x="Timestamp", y="Net")
-        
-        # --- THE TRADE LIST ---
-        st.write("### 📜 Detailed Trade List")
-        st.dataframe(res.sort_values(by="Timestamp", ascending=False).style.background_gradient(subset=['MAE'], cmap='Reds'))
+        st.write("### 📜 Full Trade Log")
+        st.dataframe(res.sort_values(by="Timestamp", ascending=False))
 
         st.divider()
-        if st.button("Request AI Multi-Asset Optimization"):
-            with st.spinner("Analyzing Lead-Lag Alpha Friction..."):
-                # PAYLOAD: Cross-referencing Hour, Weekday, and Lead Sync
-                summary = res.groupby(['Hour', 'Weekday', 'Lead_Sync', 'Status']).agg({
-                    'Net': 'sum',
-                    'MAE': 'mean',
-                    'MFE': 'mean'
-                }).reset_index().to_string()
+        if st.button("Request AI Bimodal Optimization"):
+            with st.spinner("Analyzing Lead-Lag Friction..."):
+                # PAYLOAD 1: Sorted Hourly Stats
+                hour_payload = res.groupby(['Hour', 'Lead_Sync']).agg({'Net': 'sum', 'MAE': 'mean', 'MFE': 'mean', 'Status': 'count'}).reset_index().to_string()
+                # PAYLOAD 2: Sorted Weekday Stats
+                day_payload = res.groupby(['Weekday', 'Lead_Sync']).agg({'Net': 'sum', 'MAE': 'mean', 'MFE': 'mean', 'Status': 'count'}).reset_index().to_string()
                 
-                clean_payload = "".join(i for i in summary if ord(i) < 128)
+                clean_payload = "".join(i for i in (hour_payload + day_payload) if ord(i) < 128)
                 
                 prompt = f"""
                 Act as the Antigravity Synthetic Reviewer using Gemini 3 Flash. 
-                Analyze this trade physics data (ES Futures vs Lead Engine Overlay):
-                {clean_payload}
+                Analyze these trading physics (ES Futures vs Lead Engine Overlay):
+                
+                HOURLY DATA:
+                {hour_payload}
+                
+                WEEKDAY DATA:
+                {day_payload}
 
                 INSTRUCTIONS:
-                1. Create a markdown table for FULL RESULTS.
-                2. Columns: [Time Block, Day, Lead Sync, Win Rate, Total P/L, Avg MAE, Risk Level].
-                3. Below the table, identify the 3 highest 'Alpha Friction' periods (where Lead Sync = Friction and MAE is high).
-                4. Provide one 'Refusal to Trade' recommendation to maximize Optimal Edge Extraction.
+                1. Provide TABLE 1: HOURLY PERFORMANCE STATS. Sort by Total P/L (Highest to Lowest). 
+                   Include: [Hour, Lead Sync Impact, Trades, Win Rate %, Total P/L, Avg MAE/MFE].
+                2. Provide TABLE 2: WEEKDAY PERFORMANCE STATS. Sort by Total P/L (Highest to Lowest).
+                   Include: [Day, Lead Sync Impact, Trades, Win Rate %, Total P/L, Avg MAE/MFE].
+                3. List the TOP 3 highest 'Alpha Friction' segments to eliminate immediately.
+                4. Give one 'Refusal to Trade' rule to maximize Optimal Edge Extraction.
                 """
                 
                 try:
-                    response = client.models.generate_content(
-                        model='gemini-3-flash-preview',
-                        contents=prompt
-                    )
+                    response = client.models.generate_content(model='gemini-3-flash-preview', contents=prompt)
                     st.markdown(response.text)
                 except Exception as e:
                     st.error(f"Handshake Failed: {str(e)}")
