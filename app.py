@@ -7,12 +7,13 @@ from datetime import datetime, time
 # --- SYSTEM CONFIGURATION ---
 st.set_page_config(page_title="Ceed Trading: Order Flow Physics Engine", layout="wide")
 
-# AI API SETUP (Gemini 3 Flash)
+# AI API SETUP (Alpha Preservation: Gemini 3 Flash Production String)
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-3-flash-preview') 
+    # The identifier for the engine you requested
+    model = genai.GenerativeModel('gemini-3-flash') 
 except Exception as e:
-    st.error("API Key Error: Please check your Streamlit Secrets.")
+    st.error("API Authentication Friction: Check your Streamlit Secrets.")
 
 def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, point_val):
     trades = []
