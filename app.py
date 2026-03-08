@@ -20,8 +20,6 @@ def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, poi
     
     for idx in signals:
         entry_time = df.loc[idx, 'dt']
-        
-        # --- TEMPORAL ALPHA FILTER ---
         if entry_time.hour not in active_hours: continue
         if entry_time.strftime('%A') not in active_days: continue
 
@@ -67,11 +65,13 @@ def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, poi
                         break
         
         if exit_p is not None:
-            lead_sync = "N/A"
+            # --- INTEGRATED OVERLAY SENSOR ---
+            lead_sync = "No_Overlay"
             if df_lead is not None:
                 lead_snap = df_lead[df_lead['dt'] <= entry_time].tail(5)
                 if not lead_snap.empty:
                     drift = lead_snap['Last'].iloc[-1] - lead_snap['Last'].iloc[0]
+                    # Logic: Aligned if Lead moves in same direction as Trade Side
                     lead_sync = "Aligned" if (side == 'Buy' and drift > 0) or (side == 'Sell' and drift < 0) else "Friction"
 
             trades.append({
@@ -82,13 +82,12 @@ def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, poi
                 "Status": status, 
                 "Lead_Sync": lead_sync,
                 "MAE": round(max_adverse, 2), 
-                "MFE": round(max_favorable, 2),
                 "Net": round((exit_p - entry_p if side == 'Buy' else entry_p - exit_p) * point_val, 2)
             })
     return pd.DataFrame(trades)
 
 # --- UI FRONTEND ---
-st.title("Antigravity: Gemini 3 Production Optimizer")
+st.title("Antigravity: Gemini 3 Multi-Asset Optimizer")
 
 st.sidebar.header("Mechanical Controls")
 stop_ticks = st.sidebar.number_input("Initial Stop (Ticks)", value=30)
@@ -99,11 +98,8 @@ point_value = st.sidebar.selectbox("Point Value", options=[50.0, 20.0, 5.0, 2.0]
 
 st.sidebar.divider()
 st.sidebar.header("Temporal Alpha Filters")
-# HOUR SELECTION SENSOR
 hour_options = list(range(0, 17))
 active_hours = st.sidebar.multiselect("Select Active Hours", options=hour_options, default=hour_options)
-
-# WEEKDAY SELECTION SENSOR
 day_options = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 active_days = st.sidebar.multiselect("Select Active Days", options=day_options, default=day_options)
 
@@ -143,29 +139,35 @@ if f_file:
         m3.metric("Win Rate %", f"{win_rate:.1f}%")
         m4.metric("Avg MAE (Heat)", f"{res['MAE'].mean():.2f}")
 
-        # WEEKDAY BREAKDOWN TABLE
-        st.write("### 📅 Weekday Statistical Breakdown")
-        day_stats = res.groupby('Weekday').agg({
-            'Net': 'sum',
-            'Status': lambda x: f"{(len(x[x=='Win'])/len(x))*100:.1f}% Win"
-        }).reindex(day_options)
-        st.table(day_stats)
-
         st.line_chart(res, x="Timestamp", y="Net")
-        st.dataframe(res.style.background_gradient(subset=['MAE'], cmap='Reds'))
 
         st.divider()
-        if st.button("Request AI Synthetic Review (Gemini 3 Flash)"):
-            with st.spinner("Engaging Gemini 3 Flash Engine..."):
-                # Sending both Hour and Weekday stats for verification
-                summary = res.groupby(['Hour', 'Weekday', 'Status']).size().to_string()
+        if st.button("Request AI Multi-Asset Review (Tabular)"):
+            with st.spinner("Analyzing Multi-Asset Alpha Friction..."):
+                # Group data by Hour, Lead_Sync, and Status to send to AI
+                summary = res.groupby(['Hour', 'Lead_Sync', 'Status']).agg({
+                    'Net': 'sum',
+                    'MAE': 'mean'
+                }).reset_index().to_string()
+                
                 clean_payload = "".join(i for i in summary if ord(i) < 128)
+                
+                prompt = f"""
+                Act as the Antigravity Synthetic Reviewer. Analyze this trade physics data:
+                {clean_payload}
+
+                INSTRUCTIONS:
+                1. Identify which 'Hour' blocks have the highest 'Friction' with the Lead Engine Overlay.
+                2. Output your findings strictly in a Markdown TABLE format.
+                3. Columns should be: [Time Block, Strategy, Lead Sync Impact, Risk Level].
+                4. Provide one final 'Refusal to Trade' recommendation below the table.
+                """
                 
                 try:
                     response = client.models.generate_content(
                         model='gemini-3-flash-preview',
-                        contents=f"Analyze these physics: {clean_payload}. Focus on which Weekday/Hour combos represent the highest Alpha Friction."
+                        contents=prompt
                     )
-                    st.info(response.text)
+                    st.markdown(response.text)
                 except Exception as e:
                     st.error(f"Handshake Failed: {str(e)}")
