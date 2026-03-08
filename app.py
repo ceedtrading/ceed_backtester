@@ -10,20 +10,23 @@ st.set_page_config(page_title="Ceed Trading: Gemini 3 Physics Engine", layout="w
 
 # --- AI SDK INITIALIZATION ---
 try:
-    # Modern GA SDK
     client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 except Exception as e:
     st.error("API Key missing in Secrets. Simulation will run locally only.")
 
-def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, point_val):
+def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, point_val, active_hours, active_days):
     trades = []
-    # Identify signals based on Sierra Chart 'Sum'
     signals = df[(df['F_Buy'] == True) | (df['F_Sell'] == True)].index.tolist()
     
     for idx in signals:
+        entry_time = df.loc[idx, 'dt']
+        
+        # --- TEMPORAL ALPHA FILTER ---
+        if entry_time.hour not in active_hours: continue
+        if entry_time.strftime('%A') not in active_days: continue
+
         side = 'Buy' if df.loc[idx, 'F_Buy'] else 'Sell'
         entry_p = df.loc[idx, 'Last']
-        entry_time = df.loc[idx, 'dt']
         future = df.loc[idx+1 : idx+200]
         if future.empty: continue
         
@@ -74,6 +77,7 @@ def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, poi
             trades.append({
                 "Timestamp": entry_time,
                 "Hour": entry_time.hour,
+                "Weekday": entry_time.strftime('%A'),
                 "Side": side, 
                 "Status": status, 
                 "Lead_Sync": lead_sync,
@@ -93,26 +97,32 @@ trail_pts = st.sidebar.number_input("T2 Trail (Pts)", value=5.0)
 be_trigger = st.sidebar.number_input("BE Trigger (Pts)", value=6.0)
 point_value = st.sidebar.selectbox("Point Value", options=[50.0, 20.0, 5.0, 2.0])
 
+st.sidebar.divider()
+st.sidebar.header("Temporal Alpha Filters")
+# HOUR SELECTION SENSOR
+hour_options = list(range(0, 17))
+active_hours = st.sidebar.multiselect("Select Active Hours", options=hour_options, default=hour_options)
+
+# WEEKDAY SELECTION SENSOR
+day_options = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+active_days = st.sidebar.multiselect("Select Active Days", options=day_options, default=day_options)
+
 f_file = st.file_uploader("1. Upload Futures Baseline (ES/NQ)", type=['txt', 'csv'])
 o_file = st.file_uploader("2. Upload Lead Engine Overlay (NVDA/AAPL)", type=['txt', 'csv'])
 
-# SESSION STATE INITIALIZATION
 if 'results' not in st.session_state:
     st.session_state.results = None
 
 if f_file:
-    # Sierra Chart Scrubbing
     raw_data = f_file.getvalue().decode("utf-8").replace("\r", "")
     df = pd.read_csv(io.StringIO(raw_data), skipinitialspace=True)
     df.columns = [c.strip() for c in df.columns]
     df['dt'] = pd.to_datetime(df['Date'] + ' ' + df['Time'])
     
-    # Physics Gates: Sum
     df['Sum_Prev'] = df['Sum'].shift(1)
     df['F_Buy'] = (df['Sum_Prev'] < 0) & (df['Sum'] > 0) & (df['dt'].dt.time <= time(15, 45))
     df['F_Sell'] = (df['Sum_Prev'] > 0) & (df['Sum'] < 0) & (df['dt'].dt.time <= time(15, 45))
 
-    # PHASE 1: LOCAL RUN
     if st.button("Run Mechanical Simulation"):
         df_lead = None
         if o_file:
@@ -120,9 +130,8 @@ if f_file:
             df_lead.columns = [c.strip() for c in df_lead.columns]
             df_lead['dt'] = pd.to_datetime(df_lead['Date'] + ' ' + df_lead['Time'])
             
-        st.session_state.results = run_simulation(df, df_lead, stop_ticks * 0.25, t1_pts, trail_pts, be_trigger, point_value)
+        st.session_state.results = run_simulation(df, df_lead, stop_ticks * 0.25, t1_pts, trail_pts, be_trigger, point_value, active_hours, active_days)
 
-    # DISPLAY SUMMARY BEFORE AI
     if st.session_state.results is not None:
         res = st.session_state.results
         st.subheader("Statistical Performance Summary")
@@ -134,20 +143,28 @@ if f_file:
         m3.metric("Win Rate %", f"{win_rate:.1f}%")
         m4.metric("Avg MAE (Heat)", f"{res['MAE'].mean():.2f}")
 
+        # WEEKDAY BREAKDOWN TABLE
+        st.write("### 📅 Weekday Statistical Breakdown")
+        day_stats = res.groupby('Weekday').agg({
+            'Net': 'sum',
+            'Status': lambda x: f"{(len(x[x=='Win'])/len(x))*100:.1f}% Win"
+        }).reindex(day_options)
+        st.table(day_stats)
+
         st.line_chart(res, x="Timestamp", y="Net")
         st.dataframe(res.style.background_gradient(subset=['MAE'], cmap='Reds'))
 
-        # PHASE 2: OPTIONAL AI OPTIMIZATION
         st.divider()
         if st.button("Request AI Synthetic Review (Gemini 3 Flash)"):
             with st.spinner("Engaging Gemini 3 Flash Engine..."):
-                summary = res.groupby(['Hour', 'Lead_Sync', 'Status']).size().to_string()
+                # Sending both Hour and Weekday stats for verification
+                summary = res.groupby(['Hour', 'Weekday', 'Status']).size().to_string()
                 clean_payload = "".join(i for i in summary if ord(i) < 128)
                 
                 try:
                     response = client.models.generate_content(
                         model='gemini-3-flash-preview',
-                        contents=f"Analyze these trading physics for Alpha Friction: {clean_payload}. Suggest a 'Refusal to Trade' window."
+                        contents=f"Analyze these physics: {clean_payload}. Focus on which Weekday/Hour combos represent the highest Alpha Friction."
                     )
                     st.info(response.text)
                 except Exception as e:
