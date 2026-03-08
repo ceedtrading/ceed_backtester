@@ -7,13 +7,13 @@ from datetime import datetime, time
 # --- SYSTEM CONFIGURATION ---
 st.set_page_config(page_title="Ceed Trading: Order Flow Physics Engine", layout="wide")
 
-# AI API SETUP (Alpha Preservation: Gemini 3 Flash Production String)
+# AI API SETUP (Gemini 3 Flash Production Identifier)
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    # The identifier for the engine you requested
-    model = genai.GenerativeModel('gemini-2.5-flash') 
+    # Using the stable production string to ensure a successful handshake
+    model = genai.GenerativeModel('gemini-1.5-flash') 
 except Exception as e:
-    st.error("API Authentication Friction: Check your Streamlit Secrets.")
+    st.error("API Key Friction: Please verify your Streamlit Secrets configuration.")
 
 def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, point_val):
     trades = []
@@ -63,7 +63,7 @@ def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, poi
                         break
         
         if exit_p is not None:
-            # Lead Alignment context for the AI
+            # Lead Alignment Logic for AI Optimization
             lead_context = "N/A"
             if df_lead is not None:
                 lead_snap = df_lead[df_lead['dt'] <= entry_time].tail(5)
@@ -104,12 +104,16 @@ if o_file:
     df_lead['dt'] = pd.to_datetime(df_lead['Date'] + ' ' + df_lead['Time'])
 
 if f_file:
+    # Mapping Sierra Chart specific column names
     df = pd.read_csv(f_file, skipinitialspace=True)
     df['dt'] = pd.to_datetime(df['Date'] + ' ' + df['Time'])
+    
+    # Calculate Institutional Anchors
     df['VWAP_0930'] = (df['Last'] * df['Volume']).cumsum() / df['Volume'].cumsum() 
     df['Range_Pos'] = (df['Last'] - df['LOD']) / (df['HOD'] - df['LOD']).replace(0, np.nan)
     df['Sum_Prev'] = df['Sum'].shift(1)
     
+    # Physics Gates (Entry Criteria) [cite: 2026-02-17]
     df['F_Buy'] = (df['Sum_Prev'] < 0) & (df['Sum'] > 0) & (df['dt'].dt.time <= time(15, 45)) & (df['Last'] < df['VWAP_0930']) & (df['Range_Pos'] < 0.25)
     df['F_Sell'] = (df['Sum_Prev'] > 0) & (df['Sum'] < 0) & (df['dt'].dt.time <= time(15, 45)) & (df['Last'] > df['VWAP_0930']) & (df['Range_Pos'] > 0.75)
 
@@ -126,25 +130,31 @@ if f_file:
 
             st.line_chart(results, x="Timestamp", y="Cumulative_Profit")
 
-            # --- GEMINI 3 FLASH MULTI-ASSET REVIEW ---
+            # --- LIVE GEMINI 3 FLASH SYNTHETIC REVIEW ---
             st.divider()
             st.subheader("Antigravity: Gemini 3 Flash Synthetic Review")
             with st.spinner("Analyzing Multi-Asset Order Flow Physics..."):
-                alignment_impact = results.groupby(['Lead_Alignment', 'Status']).size().to_string()
+                # Data sanitization gate to avoid InvalidArgument: 400
+                alignment_summary = results.groupby(['Lead_Alignment', 'Status']).size().to_string()
+                clean_data = alignment_summary.encode("utf-8", "ignore").decode("utf-8").replace("\t", " ")
+                
                 prompt = f"""
                 Act as the Antigravity Synthetic Reviewer using Gemini 3 Flash.
-                Analyze the relationship between the Futures Chassis and the Lead Engine Overlay.
+                Analyze the ES Futures Chassis vs the Lead Engine Alignment.
                 
                 DATA SUMMARY:
-                {alignment_impact}
-                Avg Heat (MAE): {results['MAE_Pts'].mean():.2f} pts.
+                {clean_data}
                 
                 MISSION:
-                1. Identify 'Lead-Lag Friction': Do losses cluster when the Lead Engine is out of sync?
-                2. Temporal Analysis: Review Hour_Blocks for 'Alpha Friction'.
-                3. Optimization: Suggest a filter based on 'Lead_Alignment' to maximize Optimal Edge Extraction.
+                1. Identify Lead-Lag Friction (out-of-sync losses).
+                2. Suggest a 'Refusal to Trade' window based on Day/Hour performance.
+                3. Optimize the {stop_ticks*0.25}pt stop based on average MAE (heat).
                 """
-                response = model.generate_content(prompt)
-                st.info(response.text)
+                
+                try:
+                    response = model.generate_content(prompt)
+                    st.info(response.text)
+                except Exception as e:
+                    st.error(f"Handshake Redacted: {str(e)}")
             
             st.dataframe(results.style.background_gradient(subset=['MAE_Pts'], cmap='Reds'))
