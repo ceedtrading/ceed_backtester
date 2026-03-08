@@ -65,13 +65,12 @@ def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, poi
                         break
         
         if exit_p is not None:
-            # --- INTEGRATED OVERLAY SENSOR ---
+            # --- OVERLAY INTEGRATION ---
             lead_sync = "No_Overlay"
             if df_lead is not None:
                 lead_snap = df_lead[df_lead['dt'] <= entry_time].tail(5)
                 if not lead_snap.empty:
                     drift = lead_snap['Last'].iloc[-1] - lead_snap['Last'].iloc[0]
-                    # Logic: Aligned if Lead moves in same direction as Trade Side
                     lead_sync = "Aligned" if (side == 'Buy' and drift > 0) or (side == 'Sell' and drift < 0) else "Friction"
 
             trades.append({
@@ -82,6 +81,7 @@ def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, poi
                 "Status": status, 
                 "Lead_Sync": lead_sync,
                 "MAE": round(max_adverse, 2), 
+                "MFE": round(max_favorable, 2),
                 "Net": round((exit_p - entry_p if side == 'Buy' else entry_p - exit_p) * point_val, 2)
             })
     return pd.DataFrame(trades)
@@ -110,6 +110,7 @@ if 'results' not in st.session_state:
     st.session_state.results = None
 
 if f_file:
+    # Sierra Chart Scrubbing
     raw_data = f_file.getvalue().decode("utf-8").replace("\r", "")
     df = pd.read_csv(io.StringIO(raw_data), skipinitialspace=True)
     df.columns = [c.strip() for c in df.columns]
@@ -132,35 +133,42 @@ if f_file:
         res = st.session_state.results
         st.subheader("Statistical Performance Summary")
         
-        m1, m2, m3, m4 = st.columns(4)
+        m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Total P/L", f"${res['Net'].sum():,.2f}")
-        m2.metric("Trades Generated", len(res))
+        m2.metric("Total Trades", len(res))
         win_rate = (len(res[res['Status'] == 'Win']) / len(res)) * 100 if len(res) > 0 else 0
         m3.metric("Win Rate %", f"{win_rate:.1f}%")
-        m4.metric("Avg MAE (Heat)", f"{res['MAE'].mean():.2f}")
+        m4.metric("Avg MAE", f"{res['MAE'].mean():.2f}")
+        m5.metric("Avg MFE", f"{res['MFE'].mean():.2f}")
 
         st.line_chart(res, x="Timestamp", y="Net")
+        
+        # --- THE TRADE LIST ---
+        st.write("### 📜 Detailed Trade List")
+        st.dataframe(res.sort_values(by="Timestamp", ascending=False).style.background_gradient(subset=['MAE'], cmap='Reds'))
 
         st.divider()
-        if st.button("Request AI Multi-Asset Review (Tabular)"):
-            with st.spinner("Analyzing Multi-Asset Alpha Friction..."):
-                # Group data by Hour, Lead_Sync, and Status to send to AI
-                summary = res.groupby(['Hour', 'Lead_Sync', 'Status']).agg({
+        if st.button("Request AI Multi-Asset Optimization"):
+            with st.spinner("Analyzing Lead-Lag Alpha Friction..."):
+                # PAYLOAD: Cross-referencing Hour, Weekday, and Lead Sync
+                summary = res.groupby(['Hour', 'Weekday', 'Lead_Sync', 'Status']).agg({
                     'Net': 'sum',
-                    'MAE': 'mean'
+                    'MAE': 'mean',
+                    'MFE': 'mean'
                 }).reset_index().to_string()
                 
                 clean_payload = "".join(i for i in summary if ord(i) < 128)
                 
                 prompt = f"""
-                Act as the Antigravity Synthetic Reviewer. Analyze this trade physics data:
+                Act as the Antigravity Synthetic Reviewer using Gemini 3 Flash. 
+                Analyze this trade physics data (ES Futures vs Lead Engine Overlay):
                 {clean_payload}
 
                 INSTRUCTIONS:
-                1. Identify which 'Hour' blocks have the highest 'Friction' with the Lead Engine Overlay.
-                2. Output your findings strictly in a Markdown TABLE format.
-                3. Columns should be: [Time Block, Strategy, Lead Sync Impact, Risk Level].
-                4. Provide one final 'Refusal to Trade' recommendation below the table.
+                1. Create a markdown table for FULL RESULTS.
+                2. Columns: [Time Block, Day, Lead Sync, Win Rate, Total P/L, Avg MAE, Risk Level].
+                3. Below the table, identify the 3 highest 'Alpha Friction' periods (where Lead Sync = Friction and MAE is high).
+                4. Provide one 'Refusal to Trade' recommendation to maximize Optimal Edge Extraction.
                 """
                 
                 try:
