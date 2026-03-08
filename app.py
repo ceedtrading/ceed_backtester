@@ -14,9 +14,12 @@ try:
 except Exception as e:
     st.error("API Key missing in Secrets. Simulation will run locally only.")
 
-def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, point_val, active_hours, active_days):
+def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, point_val, active_hours, active_days, slippage_ticks):
     trades = []
     signals = df[(df['F_Buy'] == True) | (df['F_Sell'] == True)].index.tolist()
+    
+    # Calculate slippage cost per trade
+    slippage_cost = slippage_ticks * 0.25 * point_val
     
     for idx in signals:
         entry_time = df.loc[idx, 'dt']
@@ -36,36 +39,46 @@ def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, poi
             if side == 'Buy':
                 max_favorable = max(max_favorable, bar['High'] - entry_p)
                 max_adverse = max(max_adverse, entry_p - bar['Low'])
+                
+                # Risk Logic
                 if not be_activated and max_favorable >= be_trigger_pts:
                     be_activated, current_stop = True, entry_p
                 if bar['Low'] <= current_stop:
                     exit_p = current_stop
                     status = "BE" if be_activated else "Loss"
                     break
+                
+                # Target & Trail Logic (SCALP FIX)
                 if not u1_hit and bar['High'] >= entry_p + t1_pts:
                     u1_hit, peak = True, bar['High']
+                    if trail_pts == 0: # Immediate exit logic
+                        exit_p, status = entry_p + t1_pts, "Win"
+                        break
                 elif u1_hit:
                     peak = max(peak, bar['High'])
                     if bar['Low'] <= peak - trail_pts:
-                        exit_p = peak - trail_pts
-                        status = "Win"
+                        exit_p, status = peak - trail_pts, "Win"
                         break
             else: # Sell Side
                 max_favorable = max(max_favorable, entry_p - bar['Low'])
                 max_adverse = max(max_adverse, bar['High'] - entry_p)
+                
                 if not be_activated and max_favorable >= be_trigger_pts:
                     be_activated, current_stop = True, entry_p
                 if bar['High'] >= current_stop:
                     exit_p = current_stop
                     status = "BE" if be_activated else "Loss"
                     break
+                
                 if not u1_hit and bar['Low'] <= entry_p - t1_pts:
                     u1_hit, peak = True, bar['Low']
+                    if trail_pts == 0:
+                        exit_p, status = entry_p - t1_pts, "Win"
+                        break
                 elif u1_hit:
                     peak = min(peak, bar['Low'])
                     if bar['High'] >= peak + trail_pts:
-                        exit_p = peak + trail_pts
-                        status = "Win"
+                        exit_p, status = peak + trail_pts, "Win"
                         break
         
         if exit_p is not None:
@@ -76,6 +89,10 @@ def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, poi
                     drift = lead_snap['Last'].iloc[-1] - lead_snap['Last'].iloc[0]
                     lead_sync = "Aligned" if (side == 'Buy' and drift > 0) or (side == 'Sell' and drift < 0) else "Friction"
 
+            # Apply Slippage to the Net $
+            raw_net = (exit_p - entry_p if side == 'Buy' else entry_p - exit_p) * point_val
+            net_after_slippage = round(raw_net - slippage_cost, 2)
+
             trades.append({
                 "Timestamp": entry_time,
                 "Hour": entry_time.hour,
@@ -85,19 +102,20 @@ def run_simulation(df, df_lead, stop_pts, t1_pts, trail_pts, be_trigger_pts, poi
                 "Lead_Sync": lead_sync,
                 "MAE": round(max_adverse, 2), 
                 "MFE": round(max_favorable, 2),
-                "Net": round((exit_p - entry_p if side == 'Buy' else entry_p - exit_p) * point_val, 2)
+                "Net": net_after_slippage
             })
     return pd.DataFrame(trades)
 
 # --- UI FRONTEND ---
-st.title("Antigravity: Bimodal Risk Optimizer")
+st.title("Antigravity: Gemini 3 Friction-Aware Optimizer")
 
 st.sidebar.header("Mechanical Controls")
 stop_ticks = st.sidebar.number_input("Initial Stop (Ticks)", value=30)
-t1_pts = st.sidebar.number_input("Target 1 (Pts)", value=12.0)
-trail_pts = st.sidebar.number_input("T2 Trail (Pts)", value=5.0)
+t1_pts = st.sidebar.number_input("Target 1 (Pts)", value=12.0, step=0.1)
+trail_pts = st.sidebar.number_input("T2 Trail (Pts)", value=5.0, step=0.1)
 be_trigger = st.sidebar.number_input("BE Trigger (Pts)", value=6.0)
 point_value = st.sidebar.selectbox("Point Value", options=[50.0, 20.0, 5.0, 2.0])
+slippage = st.sidebar.number_input("Slippage (Ticks)", value=2)
 
 st.sidebar.divider()
 st.sidebar.header("Temporal Alpha Filters")
@@ -129,25 +147,24 @@ if f_file:
             df_lead.columns = [c.strip() for c in df_lead.columns]
             df_lead['dt'] = pd.to_datetime(df_lead['Date'] + ' ' + df_lead['Time'])
             
-        st.session_state.results = run_simulation(df, df_lead, stop_ticks * 0.25, t1_pts, trail_pts, be_trigger, point_value, active_hours, active_days)
+        st.session_state.results = run_simulation(df, df_lead, stop_ticks * 0.25, t1_pts, trail_pts, be_trigger, point_value, active_hours, active_days, slippage)
 
     if st.session_state.results is not None:
         res = st.session_state.results
         st.subheader("Statistical Performance Summary")
         
-        # --- ENHANCED RISK METRICS ---
         avg_win = res[res['Net'] > 0]['Net'].mean() if not res[res['Net'] > 0].empty else 0
         avg_loss = res[res['Net'] <= 0]['Net'].mean() if not res[res['Net'] <= 0].empty else 0
         
         m1, m2, m3 = st.columns(3)
-        m1.metric("Total P/L", f"${res['Net'].sum():,.2f}")
+        m1.metric("Total Net P/L", f"${res['Net'].sum():,.2f}")
         m2.metric("Total Trades", len(res))
         win_rate = (len(res[res['Status'] == 'Win']) / len(res)) * 100 if len(res) > 0 else 0
         m3.metric("Win Rate %", f"{win_rate:.1f}%")
 
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Avg Win $", f"${avg_win:,.2f}", delta_color="normal")
-        c2.metric("Avg Loss $", f"${avg_loss:,.2f}", delta_color="inverse")
+        c1.metric("Avg Win (Inc. Slip)", f"${avg_win:,.2f}")
+        c2.metric("Avg Loss (Inc. Slip)", f"${avg_loss:,.2f}")
         c3.metric("Avg MAE", f"{res['MAE'].mean():.2f}")
         c4.metric("Avg MFE", f"{res['MFE'].mean():.2f}")
 
@@ -157,13 +174,13 @@ if f_file:
 
         st.divider()
         if st.button("Request AI Bimodal Optimization"):
-            with st.spinner("Analyzing Risk Dynamics..."):
+            with st.spinner("Analyzing Risk & Friction..."):
                 hour_payload = res.groupby(['Hour', 'Lead_Sync']).agg({'Net': 'sum', 'MAE': 'mean', 'Status': 'count'}).reset_index().to_string()
                 day_payload = res.groupby(['Weekday', 'Lead_Sync']).agg({'Net': 'sum', 'MAE': 'mean', 'Status': 'count'}).reset_index().to_string()
                 
                 prompt = f"""
-                Act as the Antigravity Synthetic Reviewer using Gemini 3 Flash. 
-                Analyze these trading physics. 
+                Act as the Antigravity Synthetic Reviewer (Gemini 3 Flash). 
+                Analyze these trading physics considering {slippage} ticks of slippage per trade.
                 Avg Win: ${avg_win:.2f}, Avg Loss: ${avg_loss:.2f}.
                 
                 HOURLY DATA:
@@ -175,9 +192,9 @@ if f_file:
                 INSTRUCTIONS:
                 1. Provide TABLE 1: HOURLY PERFORMANCE. Sort by Total P/L (Highest to Lowest).
                 2. Provide TABLE 2: WEEKDAY PERFORMANCE. Sort by Total P/L (Highest to Lowest).
-                3. Columns for both: [Segment, Lead Sync, Win Rate %, Total P/L, Avg MAE, Risk Level].
-                4. Compare the 'Avg Win' vs 'Avg Loss' and identify if specific segments are skewing the R:R unfavorably.
-                5. Provide one final 'Refusal to Trade' rule.
+                3. Columns: [Segment, Lead Sync, Trades, Win Rate %, Total P/L, Avg MAE, Risk Level].
+                4. Identify if slippage is rendering specific high-frequency segments unprofitable.
+                5. Provide a 'Refusal to Trade' rule to maximize Optimal Edge Extraction.
                 """
                 
                 try:
